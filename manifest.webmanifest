@@ -1,0 +1,18 @@
+{
+  "name": "Cuentas D'talles Any",
+  "short_name": "D'talles Any",
+  "description": "Contabilidad e inventario de D'talles Any y Makeup by D'talles Any",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#FBF4F1",
+  "theme_color": "#8E2A4F",
+  "lang": "es",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

@@ -1,0 +1,46 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Administradores iniciales: los mismos correos que ADMINS_INICIALES en config.js
+    function iniciales() {
+      return ['CORREO_1', 'CORREO_2', 'CORREO_3']  // se reemplazan en la consola de Firebase;
+    }
+    function correo() { return request.auth.token.email.lower(); }
+    function verificado() { return request.auth != null && request.auth.token.email_verified == true; }
+    function perfilRef() { return /databases/$(database)/documents/perfiles/$(correo()); }
+    function activo() {
+      return verificado() && exists(perfilRef()) && get(perfilRef()).data.activo == true;
+    }
+    function admin() { return activo() && get(perfilRef()).data.rol == 'admin'; }
+
+    // Perfiles: cada quien lee el suyo; solo administradores ven y cambian la lista.
+    match /perfiles/{email} {
+      allow read: if verificado() && (email == correo() || admin());
+      allow create: if admin()
+        || (verificado() && email == correo() && correo() in iniciales()
+            && request.resource.data.rol == 'admin' && request.resource.data.activo == true);
+      allow update, delete: if admin();
+    }
+
+    // Movimientos: los administradores todo; vendedores solo pueden registrar ventas.
+    match /movs/{id} {
+      allow read, update, delete: if admin();
+      allow create: if admin() || (activo() && request.resource.data.tipo == 'venta');
+    }
+
+    // Inventario: todos los perfiles activos lo ven; vendedores solo cambian unidades y estado al vender.
+    match /productos/{id} {
+      allow read: if activo();
+      allow create, delete: if admin();
+      allow update: if admin()
+        || (activo() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock', 'estado']));
+    }
+
+    // Tasa de cambio
+    match /config/{id} {
+      allow read: if activo();
+      allow write: if admin();
+    }
+  }
+}
