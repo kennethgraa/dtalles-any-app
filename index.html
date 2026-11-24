@@ -297,7 +297,7 @@ body.vend .fin{display:none!important}
     <section class="panel">
       <div class="panel-head">
         <h3>Movimientos</h3>
-        <button class="btn ghost small" type="button" id="csvBtn" hidden>Descargar Excel (CSV)</button>
+        <button class="btn ghost small" type="button" id="csvBtn" hidden>Descargar Excel</button>
       </div>
       <div class="filters">
         <input id="q" type="search" placeholder="Buscar cliente, producto, código…" aria-label="Buscar movimientos">
@@ -323,7 +323,7 @@ body.vend .fin{display:none!important}
     <div class="panel-head">
       <h3>Inventario</h3>
       <span style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn ghost small" type="button" id="csvInv" hidden>Descargar inventario (CSV)</button>
+        <button class="btn ghost small" type="button" id="csvInv" hidden>Descargar inventario (Excel)</button>
         <button class="btn small" type="button" id="addProd">＋ Producto</button>
       </span>
     </div>
@@ -942,10 +942,191 @@ function csvInv(){
     [p.codigo,BIZ[p.negocio],p.nombre,p.categoria,p.marca,p.tono,ESTADO_LBL[pEstado(p)],num(p.stock),conv(num(p.costo)).toFixed(2),conv(num(p.precio)).toFixed(2),p.vence,p.nota].map(csvq).join(",")));
   return "﻿"+lines.join("\r\n");
 }
-async function saveFile(name,data){
-  const blob=new Blob([data],{type:"text/csv;charset=utf-8"});
+/* ---------- Excel (.xlsx) con formato ---------- */
+const XLSX_MIME="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+let _xl=null;
+function loadXL(){
+  return _xl || (_xl=new Promise((res,rej)=>{ const s=document.createElement("script");
+    s.src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"; s.onload=()=>res(window.ExcelJS); s.onerror=()=>{ _xl=null; rej(new Error("xl")); };
+    document.head.appendChild(s); }));
+}
+const XC={berry:"FF8E2A4F", rose:"FFC24D72", blush:"FFF3D9D2", petal:"FFFBF4F1", cuero:"FFF1E2D3", ink:"FF3A1F24", muted:"FF7A5A5F", ok:"FFDDEFE3", okT:"FF2F7A4F", bad:"FFF8DCE0", badT:"FFA3283A", warn:"FFFBEBC9", line:"FFE9D3CD", white:"FFFFFFFF"};
+const xDate = s => { if(!s) return null; const [y,m,d]=s.split("-").map(Number); return new Date(Date.UTC(y,m-1,d,12)); };
+const periodLabel = () => range==="all" ? "Todo el historial" : range==="year" ? "Año "+cy : MESES[cm]+" "+cy;
+const bizLabel = () => biz==="all" ? "D'talles Any y Makeup by D'talles Any" : biz==="makeup" ? "Makeup by D'talles Any" : "D'talles Any (bolsos)";
+const esCanje = r => /Canje|Regalo/.test(r.categoria||"");
+
+function xlSheet(wb, name, title, cols, rows, opts={}){
+  const ws=wb.addWorksheet(name,{views:[{state:"frozen", ySplit:4, showGridLines:false}], properties:{tabColor:{argb:opts.tab||XC.berry}}});
+  const mf = cur==="USD" ? '"US$ "#,##0.00;[Red]-"US$ "#,##0.00' : '"C$ "#,##0.00;[Red]-"C$ "#,##0.00';
+  ws.columns = cols.map(c=>({key:c.k, width:c.w||14}));
+  ws.mergeCells(1,1,1,Math.max(2,cols.length));
+  const t=ws.getCell(1,1); t.value=title; t.font={name:"Calibri", size:16, bold:true, color:{argb:XC.berry}};
+  ws.getRow(1).height=26;
+  ws.mergeCells(2,1,2,Math.max(2,cols.length));
+  const st=ws.getCell(2,1); st.value=bizLabel()+" · "+periodLabel()+" · montos en "+(cur==="USD"?"dólares (US$)":"córdobas (C$)")+(cur==="USD"?" · tasa C$ "+tasa:"")+" · descargado el "+fmtDate(today())+(ME?" por "+(ME.nombre||ME.email):"");
+  st.font={size:10, italic:true, color:{argb:XC.muted}};
+  const hr=ws.getRow(4);
+  cols.forEach((c,i)=>{ const cell=hr.getCell(i+1); cell.value=c.h;
+    cell.font={bold:true, color:{argb:XC.white}}; cell.fill={type:"pattern", pattern:"solid", fgColor:{argb:XC.berry}};
+    cell.alignment={vertical:"middle", horizontal: c.t==="money"||c.t==="int"||c.t==="pct" ? "right" : "left", wrapText:true};
+    cell.border={bottom:{style:"thin", color:{argb:XC.rose}}}; });
+  hr.height=30;
+  rows.forEach((r,ri)=>{
+    const row=ws.getRow(5+ri);
+    cols.forEach((c,i)=>{ const cell=row.getCell(i+1); let v=r[c.k];
+      if(c.t==="money") v = v==null||v==="" ? null : r2(conv(Number(v)||0));
+      if(c.t==="date") v = xDate(v);
+      cell.value = v==null ? null : v;
+      if(c.t==="money") cell.numFmt=mf; else if(c.t==="pct") cell.numFmt="0%"; else if(c.t==="date") cell.numFmt="dd/mm/yyyy"; else if(c.t==="int") cell.numFmt="0";
+      if(ri%2===1) cell.fill={type:"pattern", pattern:"solid", fgColor:{argb:XC.petal}};
+      cell.border={bottom:{style:"hair", color:{argb:XC.line}}};
+      if(c.style) c.style(cell, r);
+    });
+  });
+  const last=4+rows.length;
+  if(rows.length) ws.autoFilter={from:{row:4,column:1}, to:{row:last,column:cols.length}};
+  if(opts.totals && rows.length){
+    const tr=ws.getRow(last+1);
+    tr.getCell(1).value="TOTAL";
+    cols.forEach((c,i)=>{ const cell=tr.getCell(i+1);
+      if((c.t==="money"||c.t==="int") && c.sum!==false){ const L=ws.getColumn(i+1).letter; cell.value={formula:`SUBTOTAL(9,${L}5:${L}${last})`}; cell.numFmt = c.t==="money" ? mf : "0"; }
+      cell.font={bold:true, color:{argb:XC.berry}}; cell.fill={type:"pattern", pattern:"solid", fgColor:{argb:XC.blush}};
+      cell.border={top:{style:"thin", color:{argb:XC.berry}}}; });
+  }
+  ws.pageSetup={orientation:"landscape", fitToPage:true, fitToWidth:1, fitToHeight:0};
+  return ws;
+}
+const ganStyle = (cell)=>{ if(typeof cell.value==="number") cell.font={bold:true, color:{argb: cell.value<0 ? XC.badT : XC.okT}}; };
+const estadoStyle = (cell)=>{ const v=String(cell.value||"");
+  if(/rojos|Pendiente|Agotado/.test(v)) { cell.fill={type:"pattern",pattern:"solid",fgColor:{argb:XC.bad}}; cell.font={color:{argb:XC.badT}, bold:true}; }
+  else if(/ganancia|Pagado|existencia/i.test(v)) { cell.fill={type:"pattern",pattern:"solid",fgColor:{argb:XC.ok}}; cell.font={color:{argb:XC.okT}}; } };
+
+function sheetTablero(wb, period){
+  const negs = biz==="all" ? ["dtalles","makeup"] : [biz];
+  const cols=[{h:"Concepto",k:"c",w:52}].concat(negs.map(n=>({h:BIZ[n],k:n,w:20,t:"money"}))).concat(negs.length>1?[{h:"Total",k:"tot",w:20,t:"money"}]:[]);
+  const S={}; negs.forEach(n=>S[n]=sums(period.filter(r=>r.negocio===n)));
+  const canj={}; negs.forEach(n=>canj[n]=period.filter(r=>r.negocio===n&&r.tipo==="gasto"&&esCanje(r)).reduce((a,r)=>a+num(r.monto),0));
+  const inv={}; negs.forEach(n=>{ const ex=prods.filter(p=>p.negocio===n&&num(p.stock)>0); inv[n]={u:ex.reduce((a,p)=>a+num(p.stock),0), c:ex.reduce((a,p)=>a+num(p.stock)*num(p.costo),0), v:ex.reduce((a,p)=>a+num(p.stock)*num(p.precio),0)}; });
+  const pend={}; negs.forEach(n=>pend[n]=rows.filter(r=>r.negocio===n&&r.tipo==="venta"&&r.estado==="pendiente").reduce((a,r)=>a+num(r.monto),0));
+  const line=(c,f,t)=>{ const o={c}; let tot=0; negs.forEach(n=>{ o[n]=f(n); tot+=o[n]; }); o.tot=tot; o._t=t; return o; };
+  const data=[
+    line("Ventas cobradas y por cobrar", n=>S[n].ventas),
+    line("(−) Costo de lo vendido (producto + taxes + comisiones de compra + envío)", n=>S[n].costoV),
+    line("(−) Comisión de venta", n=>S[n].comis),
+    line("(=) GANANCIA BRUTA", n=>S[n].ventas-S[n].costoV-S[n].comis, "bold"),
+    line("(−) Gastos (alquiler, publicidad, envíos, empaques…)", n=>S[n].gastos-canj[n]),
+    line("(−) Productos dados en canje o regalados (a su costo)", n=>canj[n]),
+    line("(=) GANANCIA NETA REAL", n=>S[n].ganancia, "main"),
+    {c:""},
+    line("Compras de mercadería (inversión, no resta de la ganancia)", n=>S[n].compras),
+    line("Ventas pendientes de cobro (todas las fechas)", n=>pend[n]),
+    {c:""},
+    {c:"INVENTARIO HOY", _t:"head"},
+    line("Unidades en existencia", n=>inv[n].u, "int"),
+    line("Dinero invertido en el inventario (lo que costó)", n=>inv[n].c),
+    line("Valor si vendés todo (a precio de venta)", n=>inv[n].v),
+    line("Ganancia que dejaría venderlo todo", n=>inv[n].v-inv[n].c),
+  ];
+  const ws=xlSheet(wb,"Tablero","¿Estamos en ganancia? · Tablero",cols,data,{tab:XC.rose});
+  const tot=sums(period); const net=tot.ganancia;
+  data.forEach((d,i)=>{ const row=ws.getRow(5+i);
+    if(d._t==="int") for(let j=2;j<=cols.length;j++){ const c=row.getCell(j); c.value=d[cols[j-1].k]; c.numFmt="0"; }
+    if(d._t==="bold"||d._t==="main") row.eachCell(c=>{ c.font={bold:true, color:{argb: d._t==="main" ? XC.white : XC.berry}}; if(d._t==="main") c.fill={type:"pattern",pattern:"solid",fgColor:{argb:XC.berry}}; });
+    if(d._t==="head") { const c=row.getCell(1); c.font={bold:true, size:12, color:{argb:XC.berry}}; }
+  });
+  const r=ws.getRow(5+data.length+1); r.getCell(1).value = net>=0 ? "✅ EN GANANCIA: después de pagar todo quedan "+money(net) : "🔴 NÚMEROS ROJOS: faltan "+money(-net)+" para cubrir los gastos";
+  r.getCell(1).font={bold:true, size:12, color:{argb: net>=0 ? XC.okT : XC.badT}};
+}
+
+function sheetResumen(wb){
+  const scope=rows.filter(inBiz);
+  let keys=[];
+  if(range==="all"){ keys=[...new Set(scope.map(r=>(r.fecha||"").slice(0,7)).filter(Boolean))].sort(); }
+  else for(let m=1;m<=12;m++) keys.push(cy+"-"+pad(m));
+  let acum=0;
+  const data=keys.map(k=>{
+    const l=scope.filter(r=>(r.fecha||"").startsWith(k)); const s=sums(l);
+    const canj=l.filter(r=>r.tipo==="gasto"&&esCanje(r)).reduce((a,r)=>a+num(r.monto),0);
+    acum+=s.ganancia; const [y,m]=k.split("-").map(Number);
+    const vacio = !l.length;
+    return {mes: MESES[m-1].charAt(0).toUpperCase()+MESES[m-1].slice(1)+(range==="all"?" "+y:""), n:s.nVentas, v:s.ventas, cv:s.costoV, com:s.comis, gb:s.ventas-s.costoV-s.comis, g:s.gastos-canj, cj:canj, gn:s.ganancia, ac:acum,
+      est: vacio ? "—" : s.ganancia>=0 ? "✅ En ganancia" : "🔴 Números rojos"};
+  });
+  xlSheet(wb,"Resumen mensual","Resumen mes a mes",[
+    {h:"Mes",k:"mes",w:16},{h:"Productos vendidos",k:"n",w:11,t:"int"},{h:"Ventas",k:"v",w:15,t:"money"},{h:"Costo de lo vendido",k:"cv",w:15,t:"money"},
+    {h:"Comisión de venta",k:"com",w:14,t:"money"},{h:"Ganancia bruta",k:"gb",w:15,t:"money"},{h:"Gastos",k:"g",w:14,t:"money"},{h:"Canje y regalos",k:"cj",w:13,t:"money"},
+    {h:"GANANCIA NETA",k:"gn",w:16,t:"money",style:ganStyle},{h:"Neta acumulada",k:"ac",w:16,t:"money",sum:false},{h:"Estado",k:"est",w:18,style:estadoStyle}
+  ],data,{totals:true});
+}
+
+function sheetVentas(wb, period){
+  const v=period.filter(r=>r.tipo==="venta").sort((a,b)=>(a.fecha||"").localeCompare(b.fecha||""));
+  xlSheet(wb,"Ventas","Ventas",[
+    {h:"Fecha",k:"fecha",w:12,t:"date"},{h:"Quincena",k:"q",w:9},{h:"Mes",k:"mes",w:11},{h:"Negocio",k:"neg",w:14},{h:"Código",k:"codigo",w:9},
+    {h:"Producto",k:"descripcion",w:40},{h:"Tipo",k:"categoria",w:14},{h:"Clienta",k:"cliente",w:16},{h:"Canal",k:"canal",w:14},
+    {h:"Precio de venta",k:"monto",w:14,t:"money"},{h:"Costo de compra",k:"costo",w:14,t:"money"},{h:"Comisión de venta",k:"comision",w:13,t:"money"},
+    {h:"Ganancia",k:"gan",w:13,t:"money",style:ganStyle},{h:"Margen",k:"mg",w:9,t:"pct"},{h:"Forma de pago",k:"metodo",w:14},{h:"Estado",k:"est",w:12,style:estadoStyle},
+    {h:"Registró",k:"por",w:12},{h:"Nota",k:"nota",w:40}
+  ], v.map(r=>{ const d=+(r.fecha||"").slice(8,10), m=+(r.fecha||"").slice(5,7), g=num(r.monto)-num(r.costo)-num(r.comision);
+    return Object.assign({},r,{q:d<=15?"1era":"2da", mes:m?MESES[m-1]:"", neg:BIZ[r.negocio], gan:g, mg:num(r.monto)?g/num(r.monto):null, est:r.estado==="pendiente"?"Pendiente":"Pagado"}); }),{totals:true});
+}
+
+function sheetGastos(wb, period){
+  const g=period.filter(r=>r.tipo==="gasto").sort((a,b)=>(a.fecha||"").localeCompare(b.fecha||""));
+  // por mes y categoría, como la hoja "Gastos fijos"
+  const cats=[...new Set(g.map(r=>r.categoria||"Otro"))].sort((a,b)=>a.localeCompare(b,"es"));
+  const meses=[...new Set(g.map(r=>(r.fecha||"").slice(0,7)))].sort();
+  const piv=meses.map(k=>{ const [y,m]=k.split("-").map(Number); const o={mes:MESES[m-1]+" "+y}; let t=0;
+    cats.forEach((c,i)=>{ const s=g.filter(r=>(r.fecha||"").startsWith(k)&&(r.categoria||"Otro")===c).reduce((a,r)=>a+num(r.monto),0); o["c"+i]=s||null; t+=s; }); o.t=t; return o; });
+  xlSheet(wb,"Gastos por mes","Gastos por mes",[{h:"Mes",k:"mes",w:16}].concat(cats.map((c,i)=>({h:c,k:"c"+i,w:15,t:"money"}))).concat([{h:"TOTAL DEL MES",k:"t",w:16,t:"money"}]),piv,{totals:true,tab:XC.rose});
+  xlSheet(wb,"Gastos","Gastos (detalle)",[
+    {h:"Fecha",k:"fecha",w:12,t:"date"},{h:"Negocio",k:"neg",w:14},{h:"Categoría",k:"categoria",w:20},{h:"Descripción",k:"descripcion",w:40},
+    {h:"Código",k:"codigo",w:9},{h:"Monto",k:"monto",w:14,t:"money"},{h:"Forma de pago",k:"metodo",w:14},{h:"Registró",k:"por",w:12},{h:"Nota",k:"nota",w:40}
+  ], g.map(r=>Object.assign({},r,{neg:BIZ[r.negocio]})),{totals:true});
+}
+
+function sheetCompras(wb, period){
+  const c=period.filter(r=>r.tipo==="compra"||r.tipo==="otro"||r.tipo==="retiro").sort((a,b)=>(a.fecha||"").localeCompare(b.fecha||""));
+  xlSheet(wb,"Compras y capital","Compras de mercadería, aportes y retiros",[
+    {h:"Fecha",k:"fecha",w:12,t:"date"},{h:"Negocio",k:"neg",w:14},{h:"Tipo",k:"tipoL",w:18},{h:"Categoría",k:"categoria",w:20},{h:"Descripción",k:"descripcion",w:36},
+    {h:"Proveedor",k:"proveedor",w:14},{h:"Entra",k:"in",w:14,t:"money"},{h:"Sale",k:"out",w:14,t:"money"},{h:"Forma de pago",k:"metodo",w:14},{h:"Nota",k:"nota",w:40}
+  ], c.map(r=>Object.assign({},r,{neg:BIZ[r.negocio], tipoL:TIPO[r.tipo], in:r.tipo==="otro"?num(r.monto):null, out:r.tipo!=="otro"?num(r.monto):null})),{totals:true});
+}
+
+function sheetInventario(wb){
+  const list=prods.filter(inBiz).sort((a,b)=>(a.codigo||"").localeCompare(b.codigo||"",undefined,{numeric:true}));
+  xlSheet(wb,"Inventario","Inventario",[
+    {h:"Código",k:"codigo",w:9},{h:"Producto",k:"nombre",w:40},{h:"Tipo",k:"categoria",w:16},{h:"Marca",k:"marca",w:16},{h:"Tono / color",k:"tono",w:14},
+    {h:"Negocio",k:"neg",w:14},{h:"Cant.",k:"stock",w:7,t:"int"},{h:"COSTO DE COMPRA",k:"costo",w:15,t:"money",sum:false},{h:"Precio de venta",k:"precio",w:14,t:"money",sum:false},
+    {h:"Comisión venta",k:"com",w:13,t:"money",sum:false},{h:"Ganancia por unidad",k:"gu",w:14,t:"money",sum:false,style:ganStyle},{h:"% Margen",k:"mg",w:9,t:"pct"},
+    {h:"Invertido (costo × cant.)",k:"inv",w:16,t:"money"},{h:"Valor de venta (precio × cant.)",k:"val",w:16,t:"money"},
+    {h:"Estado",k:"est",w:15,style:estadoStyle},{h:"Vence",k:"vence",w:12,t:"date"},{h:"Nota",k:"nota",w:24}
+  ], list.map(p=>{ const com=p.negocio==="dtalles"?num(p.precio)*COMISION_PCT.dtalles:0, gu=num(p.precio)-num(p.costo)-com, st=num(p.stock);
+    return Object.assign({},p,{neg:BIZ[p.negocio], com, gu, mg:num(p.precio)?gu/num(p.precio):null, inv:st*num(p.costo), val:st*num(p.precio), est:ESTADO_LBL[pEstado(p)]}); }),{totals:true,tab:XC.rose});
+}
+
+async function exportXlsx(kind){
+  const btn = kind==="inv" ? $("#csvInv") : $("#csvBtn"); const old=btn.textContent; btn.disabled=true; btn.textContent="Preparando…";
   try{
-    const file=new File([blob],name,{type:"text/csv"});
+    const ExcelJS=await loadXL();
+    const wb=new ExcelJS.Workbook(); wb.creator="Cuentas D'talles Any"; wb.created=new Date();
+    const period=rows.filter(inBiz).filter(inPeriod);
+    if(kind==="inv") sheetInventario(wb);
+    else { sheetTablero(wb,period); sheetResumen(wb); sheetVentas(wb,period); sheetGastos(wb,period); sheetCompras(wb,period); sheetInventario(wb); }
+    const buf=await wb.xlsx.writeBuffer();
+    const neg = biz==="all"?"DtallesAny":biz==="makeup"?"Makeup_by_DtallesAny":"DtallesAny_Bolsos";
+    const per = range==="all"?"Todo":range==="year"?String(cy):cy+"-"+pad(cm+1);
+    await saveFile((kind==="inv"?"Inventario_":"Contabilidad_")+neg+"_"+(kind==="inv"?today():per)+".xlsx", buf, XLSX_MIME);
+  }catch(x){ console.error(x); toast(x&&x.message==="xl" ? "Para descargar el Excel la primera vez necesitás internet." : "No se pudo crear el Excel. Intentá otra vez."); }
+  finally{ btn.disabled=false; btn.textContent=old; }
+}
+
+async function saveFile(name,data,type){
+  type = type || "text/csv;charset=utf-8";
+  const blob=new Blob([data],{type});
+  try{
+    const file=new File([blob],name,{type});
     if(/Android|iPhone|iPad/i.test(navigator.userAgent) && navigator.canShare && navigator.canShare({files:[file]})){ await navigator.share({files:[file], title:name}); return; }
   }catch(x){ if(x && x.name==="AbortError") return; }
   const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=name; document.body.appendChild(a); a.click();
@@ -1001,11 +1182,8 @@ $("#rateEdit").addEventListener("click",()=>rateOpen(true));
 $("#rateCancel").addEventListener("click",()=>rateOpen(false));
 $("#rateSave").addEventListener("click",async()=>{ const v=parseFloat($("#rateIn").value); if(!(v>1)){ toast("Escribí una tasa válida, por ejemplo 36.6243"); return; }
   try{ await db.doc("config/moneda").set({tasa:Math.round(v*10000)/10000, actualizada:new Date().toISOString()}); rateOpen(false); toast("Tasa actualizada"); }catch(x){ toast("No se pudo guardar la tasa. Intentá otra vez."); } });
-$("#csvBtn").addEventListener("click",()=>{
-  const name = "movimientos-"+(biz==="all"?"dtalles-any":biz==="makeup"?"makeup-by-dtalles-any":"dtalles-any-bolsos")+"-"+(range==="all"?"todo":range==="year"?cy:cy+"-"+pad(cm+1))+".csv";
-  saveFile(name, csvMovs());
-});
-$("#csvInv").addEventListener("click",()=>saveFile("inventario-"+(biz==="all"?"dtalles-any":biz)+"-"+today()+".csv", csvInv()));
+$("#csvBtn").addEventListener("click",()=>exportXlsx("all"));
+$("#csvInv").addEventListener("click",()=>exportXlsx("inv"));
 
 render();
 
